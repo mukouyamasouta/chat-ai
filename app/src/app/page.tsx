@@ -34,8 +34,11 @@ export default function Home() {
   const [showNewClientModal, setShowNewClientModal] = useState(false);
   const [newClientName, setNewClientName] = useState("");
   const [sidebarOpen, setSidebarOpen] = useState(true);
+  const [imagePreview, setImagePreview] = useState<string | null>(null);
+  const [imageBase64, setImageBase64] = useState<string | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const imageInputRef = useRef<HTMLInputElement>(null);
 
   // クライアントデータをlocalStorageから読み込み
   useEffect(() => {
@@ -193,6 +196,112 @@ export default function Home() {
     if (fileInputRef.current) {
       fileInputRef.current.value = "";
     }
+  };
+
+  // 画像アップロード処理
+  const handleImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    // ファイルサイズチェック（20MB制限）
+    if (file.size > 20 * 1024 * 1024) {
+      alert("画像サイズは20MB以下にしてください");
+      return;
+    }
+
+    const reader = new FileReader();
+    reader.onload = (event) => {
+      const result = event.target?.result as string;
+      setImagePreview(result);
+      // Base64部分のみ抽出
+      const base64 = result.split(",")[1];
+      setImageBase64(base64);
+    };
+    reader.readAsDataURL(file);
+
+    if (imageInputRef.current) {
+      imageInputRef.current.value = "";
+    }
+  };
+
+  // 画像プレビューをキャンセル
+  const handleCancelImage = () => {
+    setImagePreview(null);
+    setImageBase64(null);
+  };
+
+  // 画像を送信してAI解析
+  const handleSendImage = async () => {
+    if (!imageBase64 || isLoading) return;
+
+    setIsLoading(true);
+    setSuggestions([]);
+
+    // プレビュー画像をメッセージとして表示
+    const imageMessage: Message = {
+      id: Date.now().toString(),
+      content: "📷 スクリーンショットを送信しました",
+      sender: "user",
+      timestamp: new Date(),
+    };
+    setMessages((prev) => [...prev, imageMessage]);
+
+    try {
+      const conversationHistory = messages
+        .map((m) => `${m.sender === "user" ? "ユーザー" : "AI"}: ${m.content}`)
+        .join("\n");
+
+      const clientContext = selectedClient
+        ? `クライアント: ${selectedClient.name} (${selectedClient.status})\nメモ: ${selectedClient.memo || "なし"}`
+        : "";
+
+      const response = await fetch("/api/chat", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          image: imageBase64,
+          conversationHistory,
+          clientContext,
+        }),
+      });
+
+      const data = await response.json();
+
+      if (data.error) {
+        const errorMessage: Message = {
+          id: (Date.now() + 1).toString(),
+          content: `エラー: ${data.error}`,
+          sender: "ai",
+          timestamp: new Date(),
+        };
+        setMessages((prev) => [...prev, errorMessage]);
+      } else {
+        const parsed = parseSuggestions(data.suggestions);
+        if (parsed.length > 0) {
+          setSuggestions(parsed);
+        } else {
+          const aiMessage: Message = {
+            id: (Date.now() + 1).toString(),
+            content: data.suggestions,
+            sender: "ai",
+            timestamp: new Date(),
+          };
+          setMessages((prev) => [...prev, aiMessage]);
+        }
+      }
+    } catch {
+      const errorMessage: Message = {
+        id: (Date.now() + 1).toString(),
+        content: "通信エラーが発生しました",
+        sender: "ai",
+        timestamp: new Date(),
+      };
+      setMessages((prev) => [...prev, errorMessage]);
+    }
+
+    setIsLoading(false);
+    setImagePreview(null);
+    setImageBase64(null);
   };
 
   const handleCopySuggestion = (text: string) => {
@@ -435,6 +544,32 @@ export default function Home() {
 
         {/* 入力エリア */}
         <div className="bg-gray-800 p-4 border-t border-gray-700">
+          {/* 画像プレビュー */}
+          {imagePreview && (
+            <div className="mb-3 relative">
+              <img
+                src={imagePreview}
+                alt="プレビュー"
+                className="max-h-48 rounded-lg border border-gray-600"
+              />
+              <div className="flex gap-2 mt-2">
+                <button
+                  onClick={handleCancelImage}
+                  className="bg-gray-600 hover:bg-gray-500 text-white px-4 py-2 rounded-lg text-sm"
+                >
+                  ✕ キャンセル
+                </button>
+                <button
+                  onClick={handleSendImage}
+                  disabled={isLoading}
+                  className="bg-purple-600 hover:bg-purple-700 disabled:bg-gray-600 text-white px-4 py-2 rounded-lg text-sm"
+                >
+                  {isLoading ? "⏳ 解析中..." : "📤 送信して解析"}
+                </button>
+              </div>
+            </div>
+          )}
+
           <div className="flex items-end gap-2">
             <input
               type="file"
@@ -443,12 +578,26 @@ export default function Home() {
               accept=".txt"
               className="hidden"
             />
+            <input
+              type="file"
+              ref={imageInputRef}
+              onChange={handleImageUpload}
+              accept="image/*"
+              className="hidden"
+            />
             <button
               onClick={() => fileInputRef.current?.click()}
               className="bg-gray-700 hover:bg-gray-600 text-white p-3 rounded-full transition-colors"
               title="txtファイルをアップロード"
             >
               📎
+            </button>
+            <button
+              onClick={() => imageInputRef.current?.click()}
+              className="bg-blue-600 hover:bg-blue-700 text-white p-3 rounded-full transition-colors"
+              title="スクリーンショットをアップロード"
+            >
+              📷
             </button>
 
             <textarea

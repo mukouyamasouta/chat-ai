@@ -41,7 +41,7 @@ function loadLearningData(): string {
 
 export async function POST(request: NextRequest) {
     try {
-        const { message, conversationHistory } = await request.json();
+        const { message, image, conversationHistory } = await request.json();
 
         const apiKey = process.env.GEMINI_API_KEY;
         if (!apiKey) {
@@ -57,8 +57,8 @@ export async function POST(request: NextRequest) {
         // 学習データを読み込む
         const learningData = loadLearningData();
 
-        // システムプロンプト
-        const systemPrompt = `あなたは売れっ子ホストのLINE返信アドバイザーです。
+        // 基本のシステムプロンプト
+        const basePrompt = `あなたは売れっ子ホストのLINE返信アドバイザーです。
 「ホスト分析データ」に基づいて、以下の3人のホストになりきって、それぞれの特徴を活かした返信候補を提案してください。
 
 参考資料（ホスト分析データ）:
@@ -101,11 +101,35 @@ ${learningData}
 ${conversationHistory || "なし"}
 `;
 
-        // Gemini APIにリクエスト
-        const result = await model.generateContent([
-            { text: systemPrompt },
-            { text: `女性からのメッセージ: ${message}` },
-        ]);
+        let result;
+
+        if (image) {
+            // 画像が送信された場合：Gemini Vision APIで解析
+            const imagePrompt = `このLINEスクリーンショットを解析してください。
+
+【タスク】
+1. スクリーンショット内の会話内容を読み取ってください
+2. 最後に女性が送ったメッセージを特定してください
+3. そのメッセージに対する返信候補を3つ生成してください
+
+${basePrompt}`;
+
+            result = await model.generateContent([
+                { text: imagePrompt },
+                {
+                    inlineData: {
+                        mimeType: "image/jpeg",
+                        data: image
+                    }
+                }
+            ]);
+        } else {
+            // テキストメッセージの場合
+            result = await model.generateContent([
+                { text: basePrompt },
+                { text: `女性からのメッセージ: ${message}` },
+            ]);
+        }
 
         const response = result.response;
         const text = response.text();
